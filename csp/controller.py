@@ -1,7 +1,9 @@
 import random
+import sys
 from collections import defaultdict
 
-from papers.csp.process import AwaitInput, AwaitOutput
+from papers.csp.io_semantics import CommandFailure
+from papers.csp.process import AwaitInput, AwaitOutput, AwaitInit
 
 
 class DeadlockError(Exception):
@@ -17,12 +19,22 @@ class SequentialDispatcher(object):
     def processes_running(self):
         return False
 
-    def run_one(self, ready_processes):
-        process = random.choice(list(ready_processes))
+    def run_one(self, ready_awaits):
+        await_ = random.choice(list(ready_awaits))
+        process = await_.origin_process
         runner = self._controller.process_runner(process)
-        self._controller.mark_unready(process)
+        self._controller.remove_ready(await_.origin_process)
         try:
-            return process, next(runner)
+            if process.check_failed_await():
+                return runner.throw(CommandFailure, 'Failed await: {}'.format(type(await_)))
+
+            # noinspection PyBroadException
+            try:
+                sending_value = await_.get_sending_value()
+            except BaseException:
+                return runner.throw(*sys.exc_info())
+
+            return runner.send(sending_value)
         except StopIteration:
             self._controller.deactivate_process(process)
             return None
@@ -38,26 +50,25 @@ class NaiveNetwork(object):
         controller.set_network(self)
 
         self._processes = set()
-        self._input_guards_by_dest = {}
-        self._outputs_by_source = {}
+        self._await_inputs_by_dest = {}
+        self._await_outputs_by_source = {}
         self._active_processes = set()
-        self._ready_processes = set()
+        self._ready_awaits_by_process = {}
         self._process_inputs = defaultdict(set)
         self._process_outputs = defaultdict(set)
-
 
     @property
     def active_processes(self):
         return frozenset(self._active_processes)
 
     @property
-    def ready_processes(self):
-        return frozenset(self._ready_processes)
+    def ready_awaits_by_process(self):
+        return dict(self._ready_awaits_by_process)
 
     def add_process(self, process):
         self._processes.add(process)
         self._active_processes.add(process)
-        self._ready_processes.add(process)
+        self._ready_awaits_by_process[process] = AwaitInit(process)
 
     def add_process_input(self, receiver, sender):
         self.add_process(receiver)
@@ -77,12 +88,22 @@ class NaiveNetwork(object):
             for output in outputs:
                 assert process in self._process_inputs[output]
 
-    def await_input(self, dest_process, guarded_matches):
+    def await_(self, await_):
+        if isinstance(await_, AwaitInput):
+            self._await_input(await_)
+        elif isinstance(await_, AwaitOutput):
+            self._await_output(await_)
+        else:
+            raise TypeError('Unknown await type {}'.format(type(await_)))
+
+    def _await_input(self, await_input):
+        dest_process = await_input.dest_process
+        guarded_matches = await_input.guarded_matches
         assert not self._controller.is_ready(dest_process)
 
         if not guarded_matches:
             dest_process.fail_await()
-            self.mark_ready(dest_process)
+            self.add_ready(dest_process)
             return
 
         for input_guard, action in guarded_matches.items():
@@ -91,10 +112,11 @@ class NaiveNetwork(object):
             if source_process is not None:
                 assert dest_process in self._process_outputs[source_process]
                 assert source_process in self._process_inputs[dest_process]
-                if source_process not in self._outputs_by_source:
+                if source_process not in self._await_outputs_by_source:
                     continue
-                value, intended_dest = self._outputs_by_source[source_process]
-                if intended_dest is not dest_process:
+                await_output = self._await_outputs_by_source[source_process]
+                value = await_output.value
+                if await_output.dest_process is not dest_process:
                     continue
                 # TODO: better deadlock detection
                 if not input_guard.matches(source_process, value):
@@ -105,71 +127,76 @@ class NaiveNetwork(object):
             else:
                 # should be callable
                 dest_process.set_callback_input(action, value)
-            del self._outputs_by_source[source_process]
-            self.mark_ready(dest_process)
-            self.mark_ready(source_process)
+            await_output = self._await_outputs_by_source.pop(source_process)
+            self.add_ready(await_input)
+            self.add_ready(await_output)
             return
 
-        assert dest_process not in self._input_guards_by_dest
-        self._input_guards_by_dest[dest_process] = guarded_matches
+        assert dest_process not in self._await_inputs_by_dest
+        self._await_inputs_by_dest[dest_process] = await_input
 
-    def await_output(self, source_process, dest_process, value):
+    def _await_output(self, await_output):
+        source_process = await_output.source_process
+        dest_process = await_output.dest_process
+        value = await_output.value
         assert not self._controller.is_ready(source_process)
         assert source_process in self._process_inputs[dest_process]
         assert dest_process in self._process_outputs[source_process]
 
         if not dest_process.active:
-            assert dest_process not in self._input_guards_by_dest
+            assert dest_process not in self._await_inputs_by_dest
             source_process.fail_await()
-            self.mark_ready(source_process)
+            self.add_ready(await_output)
             return
 
-        if dest_process in self._input_guards_by_dest:
-            for input_guard, action in self._input_guards_by_dest[dest_process].items():
+        if dest_process in self._await_inputs_by_dest:
+            for input_guard, action in self._await_inputs_by_dest[dest_process].guarded_matches.items():
                 if not input_guard.matches(source_process, value):
                     continue
                 if isinstance(action, str):
                     dest_process.set_branch_value(action, value)
                 else:
                     dest_process.set_callback_input(action, value)
-                del self._input_guards_by_dest[dest_process]
-                self.mark_ready(source_process)
-                self.mark_ready(dest_process)
+                await_input = self._await_inputs_by_dest.pop(dest_process)
+                self.add_ready(await_output)
+                self.add_ready(await_input)
                 return
 
-        assert source_process not in self._outputs_by_source
-        self._outputs_by_source[source_process] = (value, dest_process)
+        assert source_process not in self._await_outputs_by_source
+        self._await_outputs_by_source[source_process] = await_output
 
     def deactivate_process(self, process):
         self._active_processes.remove(process)
-        for dest_process, input_guards in self._input_guards_by_dest.items():
+        for dest_process, await_input in self._await_inputs_by_dest.items():
+            guarded_matches = await_input.guarded_matches
             assert dest_process is not process
-            for input_guard in input_guards.keys():
+            for input_guard in guarded_matches.keys():
                 if not input_guard.viable:
-                    del input_guards[input_guard]
-            if not input_guards:
-                del self._input_guards_by_dest[dest_process]
+                    del guarded_matches[input_guard]
+            if not guarded_matches:
+                await_input = self._await_inputs_by_dest.pop(dest_process)
                 dest_process.fail_await()
-                self.mark_ready(dest_process)
+                self.add_ready(await_input)
 
-        for source_process, (_, dest_process) in self._outputs_by_source.items():
+        for source_process, await_output in self._await_outputs_by_source.items():
             assert source_process is not process
-            if dest_process is process:
-                del self._outputs_by_source[source_process]
+            if await_output.dest_process is process:
+                await_output = self._await_outputs_by_source.pop(source_process)
                 source_process.fail_await()
-                self.mark_ready(source_process)
+                self.add_ready(await_output)
 
-    def mark_unready(self, process):
-        assert process not in self._input_guards_by_dest
-        assert process not in self._outputs_by_source
-        self._ready_processes.remove(process)
+    def remove_ready(self, process):
+        assert process not in self._await_inputs_by_dest
+        assert process not in self._await_outputs_by_source
+        del self.ready_awaits_by_process[process]
 
-    def mark_ready(self, process):
+    def add_ready(self, await_):
         # Maybe should be private?
-        assert process not in self._ready_processes
-        assert process not in self._input_guards_by_dest
-        assert process not in self._outputs_by_source
-        self._ready_processes.add(process)
+        process = await_.origin_process
+        assert process not in self._ready_awaits_by_process
+        assert process not in self._await_inputs_by_dest
+        assert process not in self._await_outputs_by_source
+        self._ready_processes[process] = await_
 
 
 class Controller(object):
@@ -187,8 +214,8 @@ class Controller(object):
         return self._network.active_processes if self._wired else frozenset()
 
     @property
-    def ready_processes(self):
-        return self._network.ready_processes if self._wired else frozenset()
+    def ready_awaits_by_process(self):
+        return self._network.ready_awaits_by_process if self._wired else {}
 
     def set_dispatcher(self, dispatcher):
         assert self._dispatcher is None
@@ -223,16 +250,16 @@ class Controller(object):
     def is_active(self, process):
         return process in self.active_processes
 
-    def mark_unready(self, process):
+    def remove_ready(self, process):
         assert self._wired
-        self._network.mark_unready(process)
+        self._network.remove_ready(process)
 
-    def mark_ready(self, process):
+    def add_ready(self, await_):
         assert self._wired
-        self._network.mark_ready(process)
+        self._network.add_ready(await_)
 
     def is_ready(self, process):
-        return process in self.ready_processes
+        return process in self.ready_awaits_by_process
 
     def process_runner(self, process):
         return self._runners_by_process[process]
@@ -244,19 +271,14 @@ class Controller(object):
     def run(self):
         assert self._wired
         while self.active_processes:
-            if not self.ready_processes:
+            if not self.ready_awaits_by_process:
                 if self._dispatcher.processes_running:
                     continue
                 raise DeadlockError('No processes can be run')
-            await_ = self._dispatcher.run_one(self.ready_processes)
+            await_ = self._dispatcher.run_one(self.ready_awaits_by_process.itervalues())
             if await_ is None:
                 continue
-            process, await_ = await_
-            if isinstance(await_, AwaitInput):
-                self._network.await_input(process, await_.guarded_matches)
-            else:
-                assert isinstance(await_, AwaitOutput)
-                self._network.await_output(process, await_.process, await_.value)
+            self._network.await_(await_)
 
 
 

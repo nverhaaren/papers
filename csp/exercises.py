@@ -1,6 +1,6 @@
 from papers.csp.controller import Controller, SequentialDispatcher, NaiveNetwork
 from papers.csp.io_semantics import InputGuard, CommandFailure
-from papers.csp.process import SingleInputProcess, SingleOutputProcess, SingleInputOutputProcess
+from papers.csp.process import SingleInputProcess, SingleOutputProcess, SingleInputOutputProcess, AwaitInput
 
 
 class SendChars(SingleOutputProcess):
@@ -11,15 +11,14 @@ class SendChars(SingleOutputProcess):
     def _run(self):
         for datum in self._data:
             yield self.await_output(self._output_process, datum)
-            self.check_output_success()
 
 
 class ReceiveChars(SingleInputProcess):
     def _run(self):
         while True:
             try:
-                yield self.await_input({InputGuard(True, self._input_process, None): 'print'})
-                branch, value = self.get_input_branch_value()
+                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'print'})
+                # This kind of assert is due to the library also being tested, once confident in its correctness it would not be necessary
                 assert branch == 'print'
                 print(repr(value))
             except CommandFailure:
@@ -30,11 +29,9 @@ class Copy(SingleInputOutputProcess):
     def _run(self):
         while True:
             try:
-                yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
-                branch, value = self.get_input_branch_value()
+                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
                 assert branch == 'the'
                 yield self.await_output(self._output_process, value)
-                self.check_output_success()
             except CommandFailure:
                 break
 
@@ -43,25 +40,19 @@ class Squash(SingleInputOutputProcess):
     def _run(self):
         while True:
             try:
-                yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
-                branch, value = self.get_input_branch_value()
+                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
                 assert branch == 'the'
                 if value != '*':
                     yield self.await_output(self._output_process, value)
-                    self.check_output_success()
                     continue
-                yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
-                branch, value = self.get_input_branch_value()
+                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
                 assert branch == 'the'
                 if value != '*':
                     yield self.await_output(self._output_process, '*')
-                    self.check_output_success()
                     yield self.await_output(self._output_process, value)
-                    self.check_output_success()
                     continue
 
                 yield self.await_output(self._output_process, '^')
-                self.check_output_success()
             except CommandFailure:
                 break
 
@@ -71,33 +62,26 @@ class ImprovedSquash(SingleInputOutputProcess):
         final = None
         while True:
             try:
-                yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
-                branch, value = self.get_input_branch_value()
+                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
                 assert branch == 'the'
                 if value != '*':
                     yield self.await_output(self._output_process, value)
-                    self.check_output_success()
                     continue
 
                 final = '*'
-                yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
-                branch, value = self.get_input_branch_value()
+                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
                 assert branch == 'the'
                 final = None
                 if value != '*':
                     yield self.await_output(self._output_process, '*')
-                    self.check_output_success()
                     yield self.await_output(self._output_process, value)
-                    self.check_output_success()
                     continue
 
                 yield self.await_output(self._output_process, '^')
-                self.check_output_success()
             except CommandFailure:
                 if final is not None:
                     try:
                         yield self.await_output(self._output_process, final)
-                        self.check_output_success()
                     except CommandFailure:
                         pass
                 break
@@ -107,15 +91,12 @@ class Disassemble(SingleInputOutputProcess):
     def _run(self):
         while True:
             try:
-                yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
-                branch, value = self.get_input_branch_value()
+                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
                 assert branch == 'the'
                 assert len(value) <= 80
                 for char in value:
                     self.await_output(self._output_process, char)
-                    self.check_output_success()
                 self.await_output(self._output_process, ' ')
-                self.check_output_success()
             except CommandFailure:
                 break
 

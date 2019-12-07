@@ -196,6 +196,10 @@ class SingleOutputProcess(Process):
         super(SingleOutputProcess, self).__init__(controller)
         self._output_process = None
 
+    @property
+    def output_process(self):
+        return self._output_process
+
     def set_output(self, process):
         self._output_process = process
         self.register_outputs(process)
@@ -213,6 +217,10 @@ class SingleInputProcess(Process):
     def __init__(self, controller):
         super(SingleInputProcess, self).__init__(controller)
         self._input_process = None
+
+    @property
+    def input_process(self):
+        return self._input_process
 
     def set_input(self, process):
         self._input_process = process
@@ -233,6 +241,14 @@ class SingleInputOutputProcess(Process):
         self._input_process = None
         self._output_process = None
 
+    @property
+    def input_process(self):
+        return self._input_process
+
+    @property
+    def output_process(self):
+        return self._output_process
+
     def set_input(self, process):
         self._input_process = process
         self.register_inputs(process)
@@ -244,6 +260,51 @@ class SingleInputOutputProcess(Process):
     @property
     def _is_run_ready(self):
         return self._input_process is not None and self._output_process is not None
+
+    @abstractmethod
+    def _run(self):
+        pass
+
+
+class SimpleAsyncWorkerProcess(Process):
+    def __init__(self, controller):
+        super(SimpleAsyncWorkerProcess, self).__init__(controller)
+        self._caller_process = None
+
+    @property
+    def caller_process(self):
+        return self._caller_process
+
+    def set_caller(self, process):
+        self._caller_process = process
+        self.register_inputs(process)
+        self.register_outputs(process)
+
+    @property
+    def _is_run_ready(self):
+        return self._caller_process is not None
+
+    @abstractmethod
+    def _run(self):
+        pass
+
+
+class AsyncCallerProcess(Process):
+    def __init__(self, controller):
+        super(AsyncCallerProcess, self).__init__(controller)
+        self._workers = {}
+
+    def get_worker(self, key):
+        return self._workers.get(key)
+
+    def set_worker(self, key, process):
+        self._workers[key] = process
+        self.register_inputs(process)
+        self.register_outputs(process)
+
+    @property
+    def _is_run_ready(self):
+        return bool(self._workers)
 
     @abstractmethod
     def _run(self):

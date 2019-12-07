@@ -75,6 +75,7 @@ class Process(object):
         self._branch_name = None
         self._input_value = None
 
+        self._running = False
         self._awaiting_input = False
         self._awaiting_output = False
         self._failed_await = False
@@ -164,6 +165,10 @@ class Process(object):
         self._awaiting_output = False
 
     def check_failed_await(self):
+        if not self._running:
+            self._running = True
+            return False
+
         assert self._awaiting
         if not self._failed_await:
             return False

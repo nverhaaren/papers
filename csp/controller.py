@@ -103,7 +103,7 @@ class NaiveNetwork(object):
 
         if not guarded_matches:
             dest_process.fail_await()
-            self.add_ready(dest_process)
+            self.add_ready(await_input)
             return
 
         for input_guard, action in guarded_matches.items():
@@ -188,7 +188,7 @@ class NaiveNetwork(object):
     def remove_ready(self, process):
         assert process not in self._await_inputs_by_dest
         assert process not in self._await_outputs_by_source
-        del self.ready_awaits_by_process[process]
+        del self._ready_awaits_by_process[process]
 
     def add_ready(self, await_):
         # Maybe should be private?
@@ -196,7 +196,7 @@ class NaiveNetwork(object):
         assert process not in self._ready_awaits_by_process
         assert process not in self._await_inputs_by_dest
         assert process not in self._await_outputs_by_source
-        self._ready_processes[process] = await_
+        self._ready_awaits_by_process[process] = await_
 
 
 class Controller(object):

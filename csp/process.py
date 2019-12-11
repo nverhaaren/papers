@@ -295,7 +295,7 @@ class AsyncCallerProcess(Process):
         self._workers = {}
 
     def get_worker(self, key):
-        return self._workers.get(key)
+        return self._workers[key]
 
     def set_worker(self, key, process):
         self._workers[key] = process

@@ -1,7 +1,7 @@
 from papers.csp.controller import Controller, SequentialDispatcher, NaiveNetwork
 from papers.csp.io_semantics import InputGuard, CommandFailure, NTuple
 from papers.csp.process import SingleInputProcess, SingleOutputProcess, SingleInputOutputProcess, \
-    SimpleAsyncWorkerProcess, AsyncCallerProcess
+    SimpleAsyncWorkerProcess, AsyncCallerProcess, Process
 
 
 class SendChars(SingleOutputProcess):
@@ -293,7 +293,7 @@ def ex3_6():
     controller.run()
 
 
-def ex_5_1():
+def ex_4_1():
     controller = Controller()
     SequentialDispatcher(controller)
     NaiveNetwork(controller)
@@ -305,3 +305,137 @@ def ex_5_1():
 
     controller.wire()
     controller.run()
+
+
+class Factorial(Process):
+    def __init__(self, controller):
+        super(Factorial, self).__init__(controller)
+        self._previous_process = None
+        self._next_process = None
+
+    def set_previous_process(self, process):
+        self._previous_process = process
+        self.register_inputs(process)
+        self.register_outputs(process)
+
+    def set_next_process(self, process):
+        self._next_process = process
+        self.register_inputs(process)
+        self.register_outputs(process)
+
+    @property
+    def _is_run_ready(self):
+        return self._previous_process is not None and self._next_process is not None
+
+    def _run(self):
+        while True:
+            try:
+                _, input_ = yield self.await_input({InputGuard(True, self._previous_process, None): 'the'})
+                if input_ == 0:
+                    yield self.await_output(self._previous_process, 1)
+                    continue
+                yield self.await_output(self._next_process, input_ - 1)
+                _, result = yield self.await_input({InputGuard(True, self._next_process, None): 'the'})
+                yield self.await_output(self._previous_process, input_ * result)
+            except CommandFailure:
+                break
+
+
+class FailProcess(Process):
+    def __init__(self, controller):
+        super(FailProcess, self).__init__(controller)
+        self._input_processes = []
+
+    def add_input_process(self, process):
+        self._input_processes.append(process)
+        self.register_inputs(process)
+
+    @property
+    def _is_run_ready(self):
+        return len(self._input_processes) > 0
+
+    def _run(self):
+        def fail_(input_):
+            raise RuntimeError('FailProcess received input {!r}'.format(input_))
+        guarded_matches = {InputGuard(True, process, None): fail_ for process in self._input_processes}
+        while True:
+            try:
+                yield self.await_input(guarded_matches)
+            except CommandFailure:
+                break
+
+
+class FactorialRunner(AsyncCallerProcess):
+    def __init__(self, controller, inputs):
+        super(FactorialRunner, self).__init__(controller)
+        self._inputs = inputs
+
+    def _run(self):
+        for input_ in self._inputs:
+            yield self.await_output(self.get_worker('factorial'), input_)
+            # This is basically an async await, as are the Factorial processes themselves
+            _, value = yield self.await_input({InputGuard(True, self.get_worker('factorial'), None): 'the'})
+            print '{}! = {}'.format(input_, value)
+
+
+def ex_4_2():
+    controller = Controller()
+    SequentialDispatcher(controller)
+    NaiveNetwork(controller)
+
+    inputs = [9, 12, 0, 1, 2, 7]
+    num_nodes = max(inputs) + 1
+
+    runner = FactorialRunner(controller, inputs)
+    factorial_nodes = [Factorial(controller) for _ in range(num_nodes)]
+    fail = FailProcess(controller)
+
+    for i in range(num_nodes):
+        if i == 0:
+            factorial_nodes[i].set_previous_process(runner)
+            runner.set_worker('factorial', factorial_nodes[i])
+        else:
+            factorial_nodes[i].set_previous_process(factorial_nodes[i - 1])
+
+        if i == num_nodes - 1:
+            factorial_nodes[i].set_next_process(fail)
+            fail.add_input_process(factorial_nodes[i])
+            fail.register_outputs(factorial_nodes[i])
+        else:
+            factorial_nodes[i].set_next_process(factorial_nodes[i + 1])
+
+    controller.wire()
+    controller.run()
+
+
+def ex_4_2_limits():
+    controller = Controller()
+    SequentialDispatcher(controller)
+    NaiveNetwork(controller)
+
+    inputs = [9, 12, 0, 1, 2, 7]
+    num_nodes = 10
+
+    runner = FactorialRunner(controller, inputs)
+    factorial_nodes = [Factorial(controller) for _ in range(num_nodes)]
+    fail = FailProcess(controller)
+
+    for i in range(num_nodes):
+        if i == 0:
+            factorial_nodes[i].set_previous_process(runner)
+            runner.set_worker('factorial', factorial_nodes[i])
+        else:
+            factorial_nodes[i].set_previous_process(factorial_nodes[i - 1])
+
+        if i == num_nodes - 1:
+            factorial_nodes[i].set_next_process(fail)
+            fail.add_input_process(factorial_nodes[i])
+            fail.register_outputs(factorial_nodes[i])
+        else:
+            factorial_nodes[i].set_next_process(factorial_nodes[i + 1])
+
+    controller.wire()
+    try:
+        controller.run()
+    except RuntimeError as e:
+        print e

@@ -1,5 +1,7 @@
-from papers.csp.controller import Controller, SequentialDispatcher, NaiveNetwork
-from papers.csp.io_semantics import InputGuard, CommandFailure, NTuple
+from collections import namedtuple
+
+from papers.csp.controller import Controller, SequentialDispatcher, NaiveNetwork, DeadlockError
+from papers.csp.io_semantics import InputGuard, CommandFailure, NTuple, Signal
 from papers.csp.process import SingleInputProcess, SingleOutputProcess, SingleInputOutputProcess, \
     SimpleAsyncWorkerProcess, AsyncCallerProcess, Process
 
@@ -439,3 +441,142 @@ def ex_4_2_limits():
         controller.run()
     except RuntimeError as e:
         print e
+
+
+class Ex43Runner(AsyncCallerProcess):
+    def _run(self):
+        worker = self.get_worker('set')
+        yield self.await_output(worker, Has43(0))
+        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        assert not value
+
+        yield self.await_output(worker, Insert43(0))
+        yield self.await_output(worker, Insert43(1))
+        yield self.await_output(worker, Insert43(0))
+
+        yield self.await_output(worker, Has43(1))
+        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        assert value
+
+        yield self.await_output(worker, Has43(2))
+        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        assert not value
+
+        yield self.await_output(worker, Has43(0))
+        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        assert value
+
+
+class Ex43DeadlockRunner(AsyncCallerProcess):
+    def _run(self):
+        worker = self.get_worker('set')
+        yield self.await_output(worker, Has43(0))
+        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        assert not value
+
+        yield self.await_output(worker, Insert43(0))
+        yield self.await_output(worker, Insert43(1))
+        yield self.await_output(worker, Insert43(0))
+
+        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+
+
+class Ex43OverflowRunner(AsyncCallerProcess):
+    def  _run(self):
+        for i in range(100):
+            yield self.await_output(self.get_worker('set'), Insert43(i))
+
+        # TODO: where these are received - maybe nowhere as is
+        try:
+            yield self.await_output(self.get_worker('set'), Insert43(100))
+        except CommandFailure:
+            print 'Received expected CommandFailure'
+            raise
+        else:
+            print 'Did not receive expected CommandFailure'
+
+
+Has43 = namedtuple('Has43', 'n')
+Insert43 = namedtuple('Insert43', 'n')
+
+
+class Set43(SimpleAsyncWorkerProcess):
+    MAX_SIZE = 100
+
+    def __init__(self, controller):
+        super(Set43, self).__init__(controller)
+        self._content = set()
+
+    def _run(self):
+        while True:
+            try:
+                branch, value = yield self.await_input({InputGuard(True, self._caller_process, Has43): 'has',
+                                                        InputGuard(True, self._caller_process, Insert43): 'insert'})
+                if branch == 'has':
+                    yield self.await_output(self._caller_process, value.n in self._content)
+                    continue
+            except CommandFailure:
+                break
+
+            assert branch == 'insert'
+            if len(self._content) >= self.MAX_SIZE:
+                raise CommandFailure('Set already full of {} elements'.format(self.MAX_SIZE))
+            self._content.add(value.n)
+
+
+def ex_4_3():
+    controller = Controller()
+    SequentialDispatcher(controller)
+    NaiveNetwork(controller)
+
+    # uses a Python set; essentially we are wrapping a Python set and imposing a size limit
+
+    runner = Ex43Runner(controller)
+    set_worker = Set43(controller)
+
+    runner.set_worker('set', set_worker)
+    set_worker.set_caller(runner)
+
+    controller.wire()
+    controller.run()
+
+    print 'Ran to completion'
+
+
+def ex_4_3_deadlock():
+    controller = Controller()
+    SequentialDispatcher(controller)
+    NaiveNetwork(controller)
+
+    # uses a Python set; essentially we are wrapping a Python set and imposing a size limit
+
+    runner = Ex43DeadlockRunner(controller)
+    set_worker = Set43(controller)
+
+    runner.set_worker('set', set_worker)
+    set_worker.set_caller(runner)
+
+    controller.wire()
+    try:
+        controller.run()
+    except DeadlockError:
+        print 'Received expected DeadlockError'
+    else:
+        print 'Did not receive expected DeadlockError'
+
+
+def ex_4_3_overflow():
+    controller = Controller()
+    SequentialDispatcher(controller)
+    NaiveNetwork(controller)
+
+    # uses a Python set; essentially we are wrapping a Python set and imposing a size limit
+
+    runner = Ex43OverflowRunner(controller)
+    set_worker = Set43(controller)
+
+    runner.set_worker('set', set_worker)
+    set_worker.set_caller(runner)
+
+    controller.wire()
+    controller.run()

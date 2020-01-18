@@ -2,6 +2,10 @@ class CommandFailure(Exception):
     pass
 
 
+class Signal(object):
+    pass
+
+
 class NTuple(object):
     def __init__(self, length):
         assert isinstance(length, int)

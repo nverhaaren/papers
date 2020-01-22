@@ -490,10 +490,10 @@ class Ex43OverflowRunner(AsyncCallerProcess):
         try:
             yield self.await_output(self.get_worker('set'), Insert43(100))
         except CommandFailure:
-            print 'Received expected CommandFailure'
+            print 'Received CommandFailure in unexpected place'
             raise
         else:
-            print 'Did not receive expected CommandFailure'
+            print 'This should be followed by a CommandFailure exception'
 
 
 Has43 = namedtuple('Has43', 'n')

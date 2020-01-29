@@ -83,10 +83,12 @@ class NaiveNetwork(object):
     def validate(self):
         for process, inputs in self._process_inputs.iteritems():
             for input_ in inputs:
-                assert process in self._process_outputs[input_]
+                assert process in self._process_outputs[input_], \
+                    '{} expects input from {} but does not receive it'.format(process, input_)
         for process, outputs in self._process_outputs.iteritems():
             for output in outputs:
-                assert process in self._process_inputs[output]
+                assert process in self._process_inputs[output], \
+                    '{} outputs to {} but is not expected'.format(process, output)
 
     def await_(self, await_):
         if isinstance(await_, AwaitInput):

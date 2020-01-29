@@ -1,3 +1,4 @@
+import random
 from collections import namedtuple
 
 from papers.csp.controller import Controller, SequentialDispatcher, NaiveNetwork, DeadlockError
@@ -580,3 +581,410 @@ def ex_4_3_overflow():
 
     controller.wire()
     controller.run()
+
+
+class Scan44(Signal):
+    pass
+
+
+class NoneLeft44(Signal):
+    pass
+
+
+Next44 = namedtuple('Next44', ['n'])
+
+
+class Set44(SimpleAsyncWorkerProcess):
+    MAX_SIZE = 100
+
+    def __init__(self, controller):
+        super(Set44, self).__init__(controller)
+        self._content = set()
+
+    def _run(self):
+        while True:
+            try:
+                branch, value = yield self.await_input({InputGuard(True, self._caller_process, Has43): 'has',
+                                                        InputGuard(True, self._caller_process, Insert43): 'insert',
+                                                        InputGuard(True, self._caller_process, Scan44): 'scan'})
+                if branch == 'has':
+                    yield self.await_output(self._caller_process, value.n in self._content)
+                    continue
+            except CommandFailure:
+                break
+
+            # Note that this does preserve insertion order, which the given code would but seems incidental as the
+            # structure is termed a set
+            if branch == 'scan':
+                for n in self._content:
+                    yield self.await_output(self._caller_process, Next44(n))
+                yield self.await_output(self.caller_process, NoneLeft44())
+                continue
+
+            assert branch == 'insert'
+            if len(self._content) >= self.MAX_SIZE:
+                raise CommandFailure('Set already full of {} elements'.format(self.MAX_SIZE))
+            self._content.add(value.n)
+
+
+class Ex44Runner(AsyncCallerProcess):
+    def __init__(self, controller, inputs):
+        super(Ex44Runner, self).__init__(controller)
+        self._inputs = inputs
+
+    def _run(self):
+        set_worker = self.get_worker('set')
+
+        for n in self._inputs:
+            yield self.await_output(set_worker, Insert43(n))
+
+        for x in range(max(self._inputs) + 1):
+            yield self.await_output(set_worker, Has43(x))
+            _, value = yield self.await_input({InputGuard(True, set_worker, None): 'the'})
+            assert value is (x in self._inputs)
+
+        echo = set()
+        yield self.await_output(set_worker, Scan44())
+        while True:
+            branch, value = yield self.await_input({InputGuard(True, set_worker, Next44): 'next',
+                                                    InputGuard(True, set_worker, NoneLeft44): 'none_left'})
+            if branch == 'none_left':
+                break
+            assert branch == 'next'
+            assert value.n not in echo
+            echo.add(value.n)
+
+        assert echo == self._inputs
+
+
+def ex_4_4():
+    random.seed(0)
+    test_set = set(random.sample(range(1000), k=32))
+
+    controller = Controller()
+    SequentialDispatcher(controller)
+    NaiveNetwork(controller)
+
+    # uses a Python set; essentially we are wrapping a Python set and imposing a size limit
+
+    runner = Ex44Runner(controller, test_set)
+    set_worker = Set44(controller)
+
+    runner.set_worker('set', set_worker)
+    set_worker.set_caller(runner)
+
+    controller.wire()
+    controller.run()
+
+    print 'Ran to completion'
+
+
+Has45 = namedtuple('Has45', ['n'])
+Insert45 = namedtuple('Insert45', ['n'])
+
+
+class Ex45Runner(Process):
+    def __init__(self, controller, inputs):
+        super(Ex45Runner, self).__init__(controller)
+        self._inputs = inputs
+        self._receiver_process = None
+        self._response_processes = set()
+
+    def set_receiver_process(self, receiver_process):
+        assert self._receiver_process is None
+        self.register_outputs(receiver_process)
+        self._receiver_process = receiver_process
+
+    def add_response_process(self, response_process):
+        self.register_inputs(response_process)
+        self._response_processes.add(response_process)
+
+    def _is_run_ready(self):
+        return self._receiver_process is not None and self._response_processes
+
+    def _run(self):
+        inserted = set()
+        previous = None
+        set_worker = self._receiver_process
+        response_matches = {InputGuard(True, process, None): 'the' for process in self._response_processes}
+        for n in self._inputs:
+            yield self.await_output(set_worker, Insert45(n))
+            inserted.add(n)
+            if previous is not None:
+                yield self.await_output(set_worker, Has45(previous))
+                _, value = yield self.await_input(response_matches)
+                assert value
+            yield self.await_output(set_worker, Has45(n))
+            _, value = yield self.await_input(response_matches)
+            assert value
+
+            some = random.sample(self._inputs, 1)[0]
+            yield self.await_output(set_worker, Has45(some))
+            _, value = yield self.await_input(response_matches)
+            assert value is (some in inserted)
+
+
+class Set45Worker(Process):
+    def __init__(self, controller):
+        super(Set45Worker, self).__init__(controller)
+        self._previous_process = None
+        self._next_process = None
+        self._originating_process = None
+
+    def set_previous_process(self, previous_process):
+        assert self._previous_process is None
+        self.register_inputs(previous_process)
+        self._previous_process = previous_process
+
+    def set_next_process(self, next_process):
+        assert self._next_process is None
+        self.register_outputs(next_process)
+        self._next_process = next_process
+
+    def set_originating_process(self, originating_process):
+        assert self._originating_process is None
+        self.register_outputs(originating_process)
+        self._originating_process = originating_process
+
+    def _is_run_ready(self):
+        return (self._next_process is not None and
+                self._previous_process is not None and
+                self._originating_process is not None)
+
+    def _run(self):
+        while True:
+            try:
+                branch, value = yield self.await_input({InputGuard(True, self._previous_process, Has45): 'has',
+                                                        InputGuard(True, self._previous_process, Insert45): 'insert'})
+                if branch == 'has':
+                    yield self.await_output(self._originating_process, False)
+                    continue
+
+                assert branch == 'insert'
+                current_value = value.n
+                while True:
+                    branch, value = yield self.await_input({InputGuard(True, self._previous_process, Has45): 'has',
+                                                            InputGuard(True, self._previous_process, Insert45): 'insert'})
+                    if branch == 'has':
+                        if value.n <= current_value:
+                            yield self.await_output(self._originating_process, value.n == current_value)
+                            continue
+                        yield self.await_output(self._next_process, value)
+                        continue
+
+                    assert branch == 'insert'
+                    if value.n < current_value:
+                        yield self.await_output(self._next_process, Insert45(current_value))
+                        current_value = value.n
+                        continue
+                    if value.n == current_value:
+                        continue
+                    assert value.n > current_value
+                    yield self.await_output(self._next_process, value)
+            except CommandFailure:
+                break
+
+
+def ex_4_5():
+    random.seed(0)
+    controller = Controller()
+    NaiveNetwork(controller)
+    SequentialDispatcher(controller)
+
+    inputs = random.sample(range(1000), 32)
+
+    runner = Ex45Runner(controller, inputs)
+    previous = runner
+    for i in range(100):
+        worker = Set45Worker(controller)
+        worker.set_previous_process(previous)
+        if i == 0:
+            runner.set_receiver_process(worker)
+        else:
+            previous.set_next_process(worker)
+        runner.add_response_process(worker)
+        worker.set_originating_process(runner)
+
+        previous = worker
+
+    fail = FailProcess(controller)
+    previous.set_next_process(fail)
+    fail.add_input_process(previous)
+
+    controller.wire()
+    controller.run()
+
+    print 'Ran to completion'
+
+
+class Least46(Signal):
+    pass
+
+
+class Set46Worker(Process):
+    def __init__(self, controller):
+        super(Set46Worker, self).__init__(controller)
+        self._previous_process = None
+        self._next_process = None
+        self._originating_process = None
+
+    def set_previous_process(self, previous_process):
+        assert self._previous_process is None
+        self.register_inputs(previous_process)
+        self.register_outputs(previous_process)
+        self._previous_process = previous_process
+
+    def set_next_process(self, next_process):
+        assert self._next_process is None
+        self.register_outputs(next_process)
+        self.register_inputs(next_process)
+        self._next_process = next_process
+
+    def set_originating_process(self, originating_process):
+        assert self._originating_process is None
+        self.register_outputs(originating_process)
+        self._originating_process = originating_process
+
+    def _is_run_ready(self):
+        return (self._next_process is not None and
+                self._previous_process is not None and
+                self._originating_process is not None)
+
+    def _run(self):
+        while True:
+            try:
+                branch, value = yield self.await_input({InputGuard(True, self._previous_process, Has45): 'has',
+                                                        InputGuard(True, self._previous_process, Insert45): 'insert',
+                                                        InputGuard(True, self._previous_process, Least46): 'least'})
+                if branch == 'has':
+                    yield self.await_output(self._originating_process, False)
+                    continue
+
+                if branch == 'least':
+                    yield self.await_output(self._previous_process, NoneLeft44())
+                    continue
+
+                assert branch == 'insert'
+                current_value = value.n
+                while True:
+                    branch, value = yield self.await_input({InputGuard(True, self._previous_process, Has45): 'has',
+                                                            InputGuard(True, self._previous_process, Insert45): 'insert',
+                                                            InputGuard(True, self._previous_process, Least46): 'least'})
+                    if branch == 'has':
+                        if value.n <= current_value:
+                            yield self.await_output(self._originating_process, value.n == current_value)
+                            continue
+                        yield self.await_output(self._next_process, value)
+                        continue
+
+                    if branch == 'least':
+                        yield self.await_output(self._previous_process, current_value)
+                        yield self.await_output(self._next_process, value)
+                        branch, value = yield self.await_input({InputGuard(True, self._next_process, int): 'least',
+                                                                InputGuard(True, self._next_process, NoneLeft44): 'none_left'})
+                        if branch == 'least':
+                            current_value = value
+                            continue
+                        assert branch == 'none_left'
+                        break
+
+                    assert branch == 'insert'
+                    if value.n < current_value:
+                        yield self.await_output(self._next_process, Insert45(current_value))
+                        current_value = value.n
+                        continue
+                    if value.n == current_value:
+                        continue
+                    assert value.n > current_value
+                    yield self.await_output(self._next_process, value)
+            except CommandFailure:
+                break
+
+
+class Ex46Runner(Process):
+    def __init__(self, controller, inputs):
+        super(Ex46Runner, self).__init__(controller)
+        self._inputs = inputs
+        self._receiver_process = None
+        self._response_processes = set()
+
+    def set_receiver_process(self, receiver_process):
+        assert self._receiver_process is None
+        self.register_outputs(receiver_process)
+        self.register_inputs(receiver_process)
+        self._receiver_process = receiver_process
+
+    def add_response_process(self, response_process):
+        self.register_inputs(response_process)
+        self._response_processes.add(response_process)
+
+    def _is_run_ready(self):
+        return self._receiver_process is not None and self._response_processes
+
+    def _run(self):
+        inserted = set()
+        previous = None
+        set_worker = self._receiver_process
+        response_matches = {InputGuard(True, process, None): 'the' for process in self._response_processes}
+        for n in self._inputs:
+            yield self.await_output(set_worker, Insert45(n))
+            inserted.add(n)
+            if previous is not None:
+                yield self.await_output(set_worker, Has45(previous))
+                _, value = yield self.await_input(response_matches)
+                assert value
+            yield self.await_output(set_worker, Has45(n))
+            _, value = yield self.await_input(response_matches)
+            assert value
+
+            some = random.sample(self._inputs, 1)[0]
+            yield self.await_output(set_worker, Has45(some))
+            _, value = yield self.await_input(response_matches)
+            assert value is (some in inserted)
+
+        while True:
+            yield self.await_output(set_worker, Least46())
+            branch, value = yield self.await_input({InputGuard(True, set_worker, NoneLeft44): 'none_left',
+                                                    InputGuard(True, set_worker, int): 'least'})
+            if branch == 'none_left':
+                break
+            assert value == min(inserted)
+            inserted.remove(value)
+            yield self.await_output(set_worker, Has45(value))
+            _, value = yield self.await_input(response_matches)
+            assert not value
+        assert not inserted
+
+
+def ex_4_6():
+    random.seed(0)
+    controller = Controller()
+    NaiveNetwork(controller)
+    SequentialDispatcher(controller)
+
+    inputs = random.sample(range(1000), 32)
+
+    runner = Ex46Runner(controller, inputs)
+    previous = runner
+    for i in range(100):
+        worker = Set46Worker(controller)
+        worker.set_previous_process(previous)
+        if i == 0:
+            runner.set_receiver_process(worker)
+        else:
+            previous.set_next_process(worker)
+        runner.add_response_process(worker)
+        worker.set_originating_process(runner)
+
+        previous = worker
+
+    fail = FailProcess(controller)
+    previous.set_next_process(fail)
+    fail.add_input_process(previous)
+    # will not output, ok since it fails on any input and it would receive input first
+    fail.register_outputs(previous)
+
+    controller.wire()
+    controller.run()
+
+    print 'Ran to completion'

@@ -658,7 +658,6 @@ class Ex44Runner(AsyncCallerProcess):
 
 
 def ex_4_4():
-    random.seed(0)
     test_set = set(random.sample(range(1000), k=32))
 
     controller = Controller()
@@ -786,7 +785,6 @@ class Set45Worker(Process):
 
 
 def ex_4_5():
-    random.seed(0)
     controller = Controller()
     NaiveNetwork(controller)
     SequentialDispatcher(controller)
@@ -957,7 +955,6 @@ class Ex46Runner(Process):
 
 
 def ex_4_6():
-    random.seed(0)
     controller = Controller()
     NaiveNetwork(controller)
     SequentialDispatcher(controller)

@@ -1,3 +1,4 @@
+from papers.csp.controller import Controller, NaiveNetwork, SequentialDispatcher
 from papers.csp.io_semantics import Signal, InputGuard, CommandFailure
 from papers.csp.process import Process
 
@@ -108,11 +109,11 @@ class Room(Process):
     def _is_run_ready(self):
         return len(self._philosophers) != 0
 
-    def _enter(self):
+    def _enter(self, _):
         self._occupancy += 1
         assert self._occupancy <= len(self._philosophers)
 
-    def _exit(self):
+    def _exit(self, _):
         self._occupancy -= 1
         assert self._occupancy >= 0
 
@@ -128,3 +129,27 @@ class Room(Process):
             except CommandFailure:
                 assert self._occupancy == 0
                 break
+
+
+def run(seats=5, lifespan=1000):
+    controller = Controller()
+    NaiveNetwork(controller)
+    SequentialDispatcher(controller)
+
+    philosophers = [Philosopher(controller, lifespan) for _ in range(seats)]
+    forks = [Fork(controller) for _ in range(seats)]
+    for i in range(seats):
+        philosophers[i].set_left_fork(forks[i])
+        forks[i].set_right_philosopher(philosophers[i])
+
+        philosophers[i].set_right_fork(forks[i-1])
+        forks[i-1].set_left_philosopher(philosophers[i])
+
+    room = Room(controller)
+    room.add_philosophers(*philosophers)
+    [philosopher.set_room(room) for philosopher in philosophers]
+
+    controller.wire()
+    controller.run()
+
+    print('Reached completion')

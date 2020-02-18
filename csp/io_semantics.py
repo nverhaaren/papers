@@ -46,3 +46,5 @@ class InputGuard(object):
         return isinstance(value, self._form)
 
 
+class Return(Exception):
+    pass

@@ -30,7 +30,7 @@ class Sieve(Process):
 
     def _run(self):
         try:
-            _, this_prime = yield self.await_input({InputGuard(True, self._previous, int): 'the'})
+            _, this_prime = yield self.await_input({InputGuard(self._previous, int): 'the'})
         except CommandFailure:
             return
 
@@ -38,7 +38,7 @@ class Sieve(Process):
         prime_multiple = this_prime
         while True:
             try:
-                _, candidate = yield self.await_input({InputGuard(True, self._previous, int): 'the'})
+                _, candidate = yield self.await_input({InputGuard(self._previous, int): 'the'})
             except CommandFailure:
                 break
 
@@ -91,7 +91,7 @@ class Print(Process):
         return len(self._inputs)
 
     def _run(self):
-        matches = {InputGuard(True, input_, None): 'the' for input_ in self._inputs}
+        matches = {InputGuard(input_): 'the' for input_ in self._inputs}
         while True:
             try:
                 _, to_print = yield self.await_input(matches)

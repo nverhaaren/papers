@@ -18,11 +18,15 @@ class NTuple(object):
 
 
 class InputGuard(object):
-    def __init__(self, boolean_result, source_process, form):
-        self._boolean_result = boolean_result
-        # None indicates it is a guard without an input process, so purely conditional
-        self._source_process = source_process
+    def __init__(self, source_process, form=None, boolean_result=True):
         self._form = form
+        self._source_process = source_process
+        # None indicates it is a guard without an input process, so purely conditional
+        self._boolean_result = boolean_result
+
+    @classmethod
+    def single_match(cls, source_process, form=None, boolean_result=True):
+        return {cls(source_process, form, boolean_result): 'the'}
 
     @property
     def viable(self):
@@ -47,4 +51,5 @@ class InputGuard(object):
 
 
 class Return(Exception):
-    pass
+    def __init__(self, result=None):
+        super(Return, self).__init__(result)

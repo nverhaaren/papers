@@ -21,7 +21,7 @@ class ReceiveChars(SingleInputProcess):
     def _run(self):
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'print'})
+                branch, value = yield self.await_input({InputGuard(self._input_process): 'print'})
                 # This kind of assert is due to the library also being tested, once confident in its correctness it would not be necessary
                 assert branch == 'print'
                 print(repr(value))
@@ -33,7 +33,7 @@ class Copy(SingleInputOutputProcess):
     def _run(self):
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
+                branch, value = yield self.await_input(InputGuard.single_match(self._input_process))
                 assert branch == 'the'
                 yield self.await_output(self._output_process, value)
             except CommandFailure:
@@ -44,12 +44,12 @@ class Squash(SingleInputOutputProcess):
     def _run(self):
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
+                branch, value = yield self.await_input(InputGuard.single_match(self._input_process))
                 assert branch == 'the'
                 if value != '*':
                     yield self.await_output(self._output_process, value)
                     continue
-                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
+                branch, value = yield self.await_input(InputGuard.single_match(self._input_process))
                 assert branch == 'the'
                 if value != '*':
                     yield self.await_output(self._output_process, '*')
@@ -66,14 +66,14 @@ class ImprovedSquash(SingleInputOutputProcess):
         final = None
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
+                branch, value = yield self.await_input(InputGuard.single_match(self._input_process))
                 assert branch == 'the'
                 if value != '*':
                     yield self.await_output(self._output_process, value)
                     continue
 
                 final = '*'
-                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
+                branch, value = yield self.await_input(InputGuard.single_match(self._input_process))
                 assert branch == 'the'
                 final = None
                 if value != '*':
@@ -106,7 +106,7 @@ class Disassemble(SingleInputOutputProcess):
     def _run(self):
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._input_process, None): 'the'})
+                branch, value = yield self.await_input(InputGuard.single_match(self._input_process))
                 assert branch == 'the'
                 assert len(value) <= 80
                 for char in value:
@@ -121,7 +121,7 @@ class Assemble(SingleInputOutputProcess):
         lineimage = []
         while True:
             try:
-                _, char = yield self.await_input({InputGuard(True, self.input_process, None): 'the'})
+                _, char = yield self.await_input(InputGuard.single_match(self._input_process))
                 lineimage.append(char)
                 if len(lineimage) >= 125:
                     yield self.await_output(self.output_process, lineimage)
@@ -137,7 +137,7 @@ class LinePrinter(SingleInputProcess):
     def _run(self):
         while True:
             try:
-                _, line = yield self.await_input({InputGuard(True, self.input_process, None): 'the'})
+                _, line = yield self.await_input(InputGuard.single_match(self._input_process))
                 assert len(line) == 125
                 print ''.join(line)
             except CommandFailure:
@@ -148,7 +148,7 @@ class DivMod(SimpleAsyncWorkerProcess):
     def _run(self):
         while True:
             try:
-                _, (dividend, divisor) = yield self.await_input({InputGuard(True, self.caller_process, NTuple(2)): 'the'})
+                _, (dividend, divisor) = yield self.await_input(InputGuard.single_match(self.caller_process, NTuple(2)))
                 assert dividend >= 0 and divisor > 0
                 quotient = 0
                 remainder = dividend
@@ -168,7 +168,7 @@ class DivModRunner(AsyncCallerProcess):
     def _run(self):
         for dividend, divisor in self._problems:
             yield self.await_output(self.get_worker('divmod'), (dividend, divisor))
-            _, (quotient, remainder) = yield self.await_input({InputGuard(True, self.get_worker('divmod'), NTuple(2)): 'the'})
+            _, (quotient, remainder) = yield self.await_input(InputGuard.single_match(self.get_worker('divmod'), NTuple(2)))
             print "{}/{} = {} + {}/{}".format(dividend, divisor, quotient, remainder, divisor)
 
 
@@ -333,12 +333,12 @@ class Factorial(Process):
     def _run(self):
         while True:
             try:
-                _, input_ = yield self.await_input({InputGuard(True, self._previous_process, None): 'the'})
+                _, input_ = yield self.await_input(InputGuard.single_match(self._previous_process))
                 if input_ == 0:
                     yield self.await_output(self._previous_process, 1)
                     continue
                 yield self.await_output(self._next_process, input_ - 1)
-                _, result = yield self.await_input({InputGuard(True, self._next_process, None): 'the'})
+                _, result = yield self.await_input(InputGuard.single_match(self._next_process))
                 yield self.await_output(self._previous_process, input_ * result)
             except CommandFailure:
                 break
@@ -360,7 +360,7 @@ class FailProcess(Process):
     def _run(self):
         def fail_(input_):
             raise RuntimeError('FailProcess received input {!r}'.format(input_))
-        guarded_matches = {InputGuard(True, process, None): fail_ for process in self._input_processes}
+        guarded_matches = {InputGuard(process): fail_ for process in self._input_processes}
         while True:
             try:
                 yield self.await_input(guarded_matches)
@@ -377,7 +377,7 @@ class FactorialRunner(AsyncCallerProcess):
         for input_ in self._inputs:
             yield self.await_output(self.get_worker('factorial'), input_)
             # This is basically an async await, as are the Factorial processes themselves
-            _, value = yield self.await_input({InputGuard(True, self.get_worker('factorial'), None): 'the'})
+            _, value = yield self.await_input(InputGuard.single_match(self.get_worker('factorial')))
             print '{}! = {}'.format(input_, value)
 
 
@@ -448,7 +448,7 @@ class Ex43Runner(AsyncCallerProcess):
     def _run(self):
         worker = self.get_worker('set')
         yield self.await_output(worker, Has43(0))
-        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        _, value = yield self.await_input(InputGuard.single_match(worker))
         assert not value
 
         yield self.await_output(worker, Insert43(0))
@@ -456,15 +456,15 @@ class Ex43Runner(AsyncCallerProcess):
         yield self.await_output(worker, Insert43(0))
 
         yield self.await_output(worker, Has43(1))
-        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        _, value = yield self.await_input(InputGuard.single_match(worker))
         assert value
 
         yield self.await_output(worker, Has43(2))
-        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        _, value = yield self.await_input(InputGuard.single_match(worker))
         assert not value
 
         yield self.await_output(worker, Has43(0))
-        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        _, value = yield self.await_input(InputGuard.single_match(worker))
         assert value
 
 
@@ -472,18 +472,18 @@ class Ex43DeadlockRunner(AsyncCallerProcess):
     def _run(self):
         worker = self.get_worker('set')
         yield self.await_output(worker, Has43(0))
-        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        _, value = yield self.await_input(InputGuard.single_match(worker))
         assert not value
 
         yield self.await_output(worker, Insert43(0))
         yield self.await_output(worker, Insert43(1))
         yield self.await_output(worker, Insert43(0))
 
-        _, value = yield self.await_input({InputGuard(True, worker, None): 'the'})
+        _, value = yield self.await_input(InputGuard.single_match(worker))
 
 
 class Ex43OverflowRunner(AsyncCallerProcess):
-    def  _run(self):
+    def _run(self):
         for i in range(100):
             yield self.await_output(self.get_worker('set'), Insert43(i))
 
@@ -511,8 +511,8 @@ class Set43(SimpleAsyncWorkerProcess):
     def _run(self):
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._caller_process, Has43): 'has',
-                                                        InputGuard(True, self._caller_process, Insert43): 'insert'})
+                branch, value = yield self.await_input({InputGuard(self._caller_process, Has43): 'has',
+                                                        InputGuard(self._caller_process, Insert43): 'insert'})
                 if branch == 'has':
                     yield self.await_output(self._caller_process, value.n in self._content)
                     continue
@@ -604,9 +604,9 @@ class Set44(SimpleAsyncWorkerProcess):
     def _run(self):
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._caller_process, Has43): 'has',
-                                                        InputGuard(True, self._caller_process, Insert43): 'insert',
-                                                        InputGuard(True, self._caller_process, Scan44): 'scan'})
+                branch, value = yield self.await_input({InputGuard(self._caller_process, Has43): 'has',
+                                                        InputGuard(self._caller_process, Insert43): 'insert',
+                                                        InputGuard(self._caller_process, Scan44): 'scan'})
                 if branch == 'has':
                     yield self.await_output(self._caller_process, value.n in self._content)
                     continue
@@ -640,14 +640,14 @@ class Ex44Runner(AsyncCallerProcess):
 
         for x in range(max(self._inputs) + 1):
             yield self.await_output(set_worker, Has43(x))
-            _, value = yield self.await_input({InputGuard(True, set_worker, None): 'the'})
+            _, value = yield self.await_input(InputGuard.single_match(set_worker))
             assert value is (x in self._inputs)
 
         echo = set()
         yield self.await_output(set_worker, Scan44())
         while True:
-            branch, value = yield self.await_input({InputGuard(True, set_worker, Next44): 'next',
-                                                    InputGuard(True, set_worker, NoneLeft44): 'none_left'})
+            branch, value = yield self.await_input({InputGuard(set_worker, Next44): 'next',
+                                                    InputGuard(set_worker, NoneLeft44): 'none_left'})
             if branch == 'none_left':
                 break
             assert branch == 'next'
@@ -705,7 +705,7 @@ class Ex45Runner(Process):
         inserted = set()
         previous = None
         set_worker = self._receiver_process
-        response_matches = {InputGuard(True, process, None): 'the' for process in self._response_processes}
+        response_matches = {InputGuard(process): 'the' for process in self._response_processes}
         for n in self._inputs:
             yield self.await_output(set_worker, Insert45(n))
             inserted.add(n)
@@ -753,8 +753,8 @@ class Set45Worker(Process):
     def _run(self):
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._previous_process, Has45): 'has',
-                                                        InputGuard(True, self._previous_process, Insert45): 'insert'})
+                branch, value = yield self.await_input({InputGuard(self._previous_process, Has45): 'has',
+                                                        InputGuard(self._previous_process, Insert45): 'insert'})
                 if branch == 'has':
                     yield self.await_output(self._originating_process, False)
                     continue
@@ -762,8 +762,8 @@ class Set45Worker(Process):
                 assert branch == 'insert'
                 current_value = value.n
                 while True:
-                    branch, value = yield self.await_input({InputGuard(True, self._previous_process, Has45): 'has',
-                                                            InputGuard(True, self._previous_process, Insert45): 'insert'})
+                    branch, value = yield self.await_input({InputGuard(self._previous_process, Has45): 'has',
+                                                            InputGuard(self._previous_process, Insert45): 'insert'})
                     if branch == 'has':
                         if value.n <= current_value:
                             yield self.await_output(self._originating_process, value.n == current_value)
@@ -851,9 +851,9 @@ class Set46Worker(Process):
     def _run(self):
         while True:
             try:
-                branch, value = yield self.await_input({InputGuard(True, self._previous_process, Has45): 'has',
-                                                        InputGuard(True, self._previous_process, Insert45): 'insert',
-                                                        InputGuard(True, self._previous_process, Least46): 'least'})
+                branch, value = yield self.await_input({InputGuard(self._previous_process, Has45): 'has',
+                                                        InputGuard(self._previous_process, Insert45): 'insert',
+                                                        InputGuard(self._previous_process, Least46): 'least'})
                 if branch == 'has':
                     yield self.await_output(self._originating_process, False)
                     continue
@@ -865,9 +865,9 @@ class Set46Worker(Process):
                 assert branch == 'insert'
                 current_value = value.n
                 while True:
-                    branch, value = yield self.await_input({InputGuard(True, self._previous_process, Has45): 'has',
-                                                            InputGuard(True, self._previous_process, Insert45): 'insert',
-                                                            InputGuard(True, self._previous_process, Least46): 'least'})
+                    branch, value = yield self.await_input({InputGuard(self._previous_process, Has45): 'has',
+                                                            InputGuard(self._previous_process, Insert45): 'insert',
+                                                            InputGuard(self._previous_process, Least46): 'least'})
                     if branch == 'has':
                         if value.n <= current_value:
                             yield self.await_output(self._originating_process, value.n == current_value)
@@ -878,8 +878,8 @@ class Set46Worker(Process):
                     if branch == 'least':
                         yield self.await_output(self._previous_process, current_value)
                         yield self.await_output(self._next_process, value)
-                        branch, value = yield self.await_input({InputGuard(True, self._next_process, int): 'least',
-                                                                InputGuard(True, self._next_process, NoneLeft44): 'none_left'})
+                        branch, value = yield self.await_input({InputGuard(self._next_process, int): 'least',
+                                                                InputGuard(self._next_process, NoneLeft44): 'none_left'})
                         if branch == 'least':
                             current_value = value
                             continue
@@ -923,7 +923,7 @@ class Ex46Runner(Process):
         inserted = set()
         previous = None
         set_worker = self._receiver_process
-        response_matches = {InputGuard(True, process, None): 'the' for process in self._response_processes}
+        response_matches = {InputGuard(process): 'the' for process in self._response_processes}
         for n in self._inputs:
             yield self.await_output(set_worker, Insert45(n))
             inserted.add(n)
@@ -942,8 +942,8 @@ class Ex46Runner(Process):
 
         while True:
             yield self.await_output(set_worker, Least46())
-            branch, value = yield self.await_input({InputGuard(True, set_worker, NoneLeft44): 'none_left',
-                                                    InputGuard(True, set_worker, int): 'least'})
+            branch, value = yield self.await_input({InputGuard(set_worker, NoneLeft44): 'none_left',
+                                                    InputGuard(set_worker, int): 'least'})
             if branch == 'none_left':
                 break
             assert value == min(inserted)

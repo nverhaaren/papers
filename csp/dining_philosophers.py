@@ -82,17 +82,17 @@ class Fork(Process):
     def _run(self):
         while True:
             try:
-                branch, _ = yield self.await_input({InputGuard(True, self._left_philosopher, PickUp): 'left',
-                                                    InputGuard(True, self._right_philosopher, PickUp): 'right'})
+                branch, _ = yield self.await_input({InputGuard(self._left_philosopher, PickUp): 'left',
+                                                    InputGuard(self._right_philosopher, PickUp): 'right'})
             except CommandFailure:
                 break
 
             if branch == 'left':
-                yield self.await_input({InputGuard(True, self._left_philosopher, PutDown): 'the'})
+                yield self.await_input({InputGuard(self._left_philosopher, PutDown): 'the'})
                 continue
 
             assert branch == 'right'
-            yield self.await_input({InputGuard(True, self._right_philosopher, PutDown): 'the'})
+            yield self.await_input({InputGuard(self._right_philosopher, PutDown): 'the'})
 
 
 class Room(Process):
@@ -120,8 +120,8 @@ class Room(Process):
     def _run(self):
         guards = {}
         for philosopher in self._philosophers:
-            guards[InputGuard(True, philosopher, Enter)] = self._enter
-            guards[InputGuard(True, philosopher, Exit)] = self._exit
+            guards[InputGuard(philosopher, Enter)] = self._enter
+            guards[InputGuard(philosopher, Exit)] = self._exit
 
         while True:
             try:

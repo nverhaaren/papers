@@ -31,7 +31,7 @@ class SequentialDispatcher(object):
             # noinspection PyBroadException
             try:
                 sending_value = await_.get_sending_value()
-            except BaseException:
+            except Exception:
                 return runner.throw(*sys.exc_info())
 
             return runner.send(sending_value)
